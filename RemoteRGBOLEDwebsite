@@ -1,0 +1,319 @@
+#include <U8g2lib.h>
+#include <WiFi.h>
+
+WiFiServer server(80);
+
+// pins for OLED
+const int OLED_CLOCK = 22;    //<--- adjust pin numbers as necessry to your board/wiring
+const int OLED_DATA = 21;      // These pins correspond to the OLED display
+const int OLED_RESET = 16;
+
+//pins for RGB LED light
+const int GREEN_PIN = 14;
+const int RED_PIN = 27;
+const int BLUE_PIN = 26;
+
+#define FADE_DELAY 75
+
+//this code creates the object g_OLED that is referred to in the code.
+ U8G2_SSD1306_128X64_NONAME_F_HW_I2C g_OLED(U8G2_R2, OLED_RESET, OLED_CLOCK, OLED_DATA);
+
+int g_lineHeight = 0;
+String curcol = "RED";
+
+int notConnectedCounter = 0;
+
+const char* ssid     = "YourSSID";      //<--change SSID and Password here!
+const char* password = "YourPassword";
+const boolean invert = false; // set true if common anode, false if common cathode
+
+int color = 0; // a value from 0 to 255 representing the hue
+int R, G, B;  // the Red Green and Blue color components
+int ledbrightness = 150;
+
+void blendUp(int start, int end){
+  int c;
+      for (int c=start; c<end;c++){
+      hueToRGB(c, ledbrightness);
+      ledcWrite(1, R);
+      ledcWrite(2, G);
+      ledcWrite(3, B);
+      delay(FADE_DELAY);
+    }
+}
+
+void blendDown(int start, int end){
+  int c;
+    for (int c=start; c>end;c--){
+    hueToRGB(c, ledbrightness);
+    ledcWrite(1, R);
+    ledcWrite(2, G);
+    ledcWrite(3, B);
+    delay(FADE_DELAY);
+  }
+            
+}
+
+void hueToRGB( int hue, int brightness)
+{
+    unsigned int scaledHue = (hue * 6);
+    unsigned int segment = scaledHue / 256; // segment 0 to 5 around the
+                                            // color wheel
+    unsigned int segmentOffset =
+      scaledHue - (segment * 256); // position within the segment
+
+    unsigned int complement = 0;
+    unsigned int prev = (brightness * ( 255 -  segmentOffset)) / 256;
+    unsigned int next = (brightness *  segmentOffset) / 256;
+
+    if(invert)
+    {
+      brightness = 255-brightness;
+      complement = 255;
+      prev = 255-prev;
+      next = 255-next;
+    }
+
+    switch(segment ) {
+    case 0:      // red
+        R = brightness;
+        G = next;
+        B = complement;
+    break;
+    case 1:     // yellow
+        R = prev;
+        G = brightness;
+        B = complement;
+    break;
+    case 2:     // green
+        R = complement;
+        G = brightness;
+        B = next;
+    break;
+    case 3:    // cyan
+        R = complement;
+        G = prev;
+        B = brightness;
+    break;
+    case 4:    // blue
+        R = next;
+        G = complement;
+        B = brightness;
+    break;
+   case 5:      // magenta
+    default:
+        R = brightness;
+        G = complement;
+        B = prev;
+    break;
+    }
+}
+void ClearLinesAndGrapics(){
+  g_OLED.clearBuffer();
+  g_OLED.home();
+  g_OLED.sendBuffer();  
+}
+void DrawLinesAndGraphicsFrame(int val){
+  
+  g_OLED.clearBuffer();
+  g_OLED.home();
+  g_OLED.drawFrame(0,0, g_OLED.getWidth(), g_OLED.getHeight());// Draw a border around the display
+
+  g_OLED.setCursor(3, g_lineHeight *2 +2);              //Draw "Hello World" and framerate
+  g_OLED.print("Hello");
+  g_OLED.setCursor(3, g_lineHeight *3 +2);
+  g_OLED.print("World");
+  g_OLED.setCursor(3, g_lineHeight *4 +2);
+  g_OLED.printf("%03d", val);                            // Placeholder for framerate
+  
+  // Draw a moire pattern like it's 1984
+
+  for (int x=0; x< g_OLED.getWidth(); x+=6){
+    g_OLED.drawLine(x, 0, g_OLED.getWidth()-x, g_OLED.getHeight());
+    //delay(50);
+  }
+
+  //Draw a reticle on the right hand side
+  const int reticleY = g_OLED.getHeight()/2;  // Find verticle centre of display
+  const int reticleR = g_OLED.getHeight()/4 - 2; // Slightly less than 1/4 screen height
+  const int reticleX = g_OLED. getWidth() - reticleR - 8; // Right justified
+
+  for (int r = reticleR; r >0; r -= 3){
+    g_OLED.drawCircle(reticleX, reticleY, r );
+  }
+  g_OLED.drawHLine(reticleX - reticleR - 5, reticleY, 2 * reticleR + 10); // H Linme through reticle centre
+  g_OLED.drawVLine(reticleX, reticleY - reticleR - 5, 2 * reticleR + 10); // V Linme through reticle centre
+  
+  g_OLED.sendBuffer();
+}
+
+void setup() {
+  // put your setup code here, to run once:
+  Serial.begin(115200);
+  
+  pinMode(RED_PIN, OUTPUT);
+  pinMode(GREEN_PIN, OUTPUT);
+  pinMode(BLUE_PIN, OUTPUT);
+
+  ledcAttachPin(RED_PIN, 1);
+  ledcSetup(1, 12000, 8);  
+  ledcAttachPin(GREEN_PIN, 2);
+  ledcSetup(2, 12000, 8);
+  ledcAttachPin(BLUE_PIN, 3);
+  ledcSetup(3, 12000, 8);
+
+  digitalWrite(RED_PIN, 255);
+
+  g_OLED.begin();
+  g_OLED.clear();
+  g_OLED.setFont(u8g2_font_profont15_tf);
+  g_lineHeight = g_OLED.getFontAscent()- g_OLED.getFontDescent();
+    //WiFi.mode(WIFI_STA);
+    Serial.print("Connecting to ");
+    Serial.println(ssid);
+    Serial.println(password);
+    
+    //WiFi.begin()
+
+    WiFi.begin(ssid, password, 7, NULL, true);
+    //WiFi.begin()
+
+    while (WiFi.status() != WL_CONNECTED) {
+        delay(500);
+        Serial.print(".");
+        notConnectedCounter++;
+        if(notConnectedCounter > 150) { // Reset board if not connected after 5s
+            Serial.println("Resetting due to Wifi not connecting...");
+            notConnectedCounter = 0;
+            ESP.restart();
+        }
+    }
+
+    Serial.println("WiFi connected.");
+    Serial.println("IP address: ");
+    Serial.println(WiFi.localIP());
+
+    digitalWrite(0,HIGH);
+    
+    server.begin();
+  
+}
+
+void loop() {
+  // put your main code here, to run repeatedly:
+  static bool bLED = LOW;
+  int fps = 12;
+
+  int intBright =0;
+
+  if (intBright > 255 or intBright < 0){
+    intBright = 0;
+  }
+  analogWrite(19, intBright);
+
+ WiFiClient client = server.available();   // listen for incoming clients
+
+  if (client) {                             // if you get a client,
+    Serial.println("New Client.");           // print a message out the serial port
+    String currentLine = "";                // make a String to hold incoming data from the client
+    while (client.connected()) {            // loop while the client's connected
+      if (client.available()) {             // if there's bytes to read from the client,
+        char c = client.read();             // read a byte, then
+        Serial.write(c);                    // print it out the serial monitor
+        if (c == '\n') {                    // if the byte is a newline character
+
+          // if the current line is blank, you got two newline characters in a row.
+          // that's the end of the client HTTP request, so send a response:
+          if (currentLine.length() == 0) {
+            // HTTP headers always start with a response code (e.g. HTTP/1.1 200 OK)
+            // and a content-type so the client knows what's coming, then a blank line:
+            client.println("HTTP/1.1 200 OK");
+            client.println("Content-type:text/html");
+            client.println();
+
+            // the content of the HTTP response follows the header:
+            // top html header
+            client.print("<html> <head> <style> div { display: block; } </style> </head> <body bgcolor=#223344>");
+            
+            // green button
+            client.print("<a href=\"/GH\"><div style=\"background-color:green; height: 75px; width: 150px;\">turn green light on</div></a>");
+
+            // red button
+            client.print("<a href=\"/RH\"><div style=\"background-color:red; height: 75px; width: 150px;\">turn red light on</div></a>");
+
+            // blue button
+            client.print("<a href=\"/BH\"><div style=\"background-color:blue; height: 75px; width: 150px;\">turn blue light on</div></a>");
+
+            //onoff button
+            client.print("<a href=\"/SH\"><div style=\"background-color:pink; height: 75px; width: 150px;\">turn screen on</div></a>");
+            client.print("<a href=\"/SL\"><div style=\"background-color:purple; height: 75px; width: 150px;\">Turn screen off</div></a><br>");
+
+            // bottom of html page
+            client.print("</body></html>");
+
+            // The HTTP response ends with another blank line:
+            client.println();
+            // break out of the while loop:
+            break;
+          } else {    // if you got a newline, then clear currentLine:
+            currentLine = "";
+          }
+        } else if (c != '\r') {  // if you got anything else but a carriage return character,
+          currentLine += c;      // add it to the end of the currentLine
+        }
+
+        // Check to see if the client request was red "GET /RH" or "GET /RL":
+        if (currentLine.endsWith("GET /RH")) {
+          // Serial.println("Get red high!");
+          // Serial.println(currentLine);
+          if (curcol == "BLUE") {
+              blendUp(171, 256);
+          }else if (curcol == "GREEN"){
+             blendDown(86, 0);
+          }
+          curcol = "RED";
+        }
+
+        // Check to see if the client request was green "GET /GH" or "GET /GL":
+        if (currentLine.endsWith("GET /GH")) {
+          // Serial.println("Get green high!");
+          // Serial.println(currentLine);
+          if (curcol == "RED"){
+            blendUp(0, 86);
+          }else if (curcol == "BLUE"){
+            blendDown(171, 86);
+          }
+          curcol = "GREEN";
+          //digitalWrite(5, HIGH);               // GET /H turns the LED on
+        }
+
+        // Check to see if the client request was blue "GET /BH" or "GET /BL":
+        if (currentLine.endsWith("GET /BH")) {
+          //Serial.println("Draw Stuff!");
+          Serial.println(currentLine);
+          if (curcol == "GREEN"){
+            blendUp(86,171);
+          }else if (curcol == "RED"){
+            blendDown(256,170);               
+          }
+          curcol = "BLUE";
+        }
+        if (currentLine.endsWith("GET /SH")) {
+          DrawLinesAndGraphicsFrame(fps);            // GET /SH turns the SCREEN on
+        }
+        if (currentLine.endsWith("GET /SL")) {
+          ClearLinesAndGrapics();                // GET /SL turns the SCREEN off
+        }
+
+        
+      }
+    }
+    // close the connection:
+    client.stop();
+    Serial.println("Client Disconnected.");
+  }
+
+  
+
+
+}
